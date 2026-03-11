@@ -22,19 +22,32 @@ io.on('connection', (socket) => {
     console.log('User connected:', socket.id);
 
     socket.on('offer', (data) => {
-        socket.broadcast.emit('offer', data);
+        // Broadcaster sends an offer targeted to a specific viewer
+        socket.to(data.target).emit('offer', { sender: socket.id, offer: data.offer });
     });
 
     socket.on('answer', (data) => {
-        socket.broadcast.emit('answer', data);
+        // Viewer sends an answer targeted back to the broadcaster
+        socket.to(data.target).emit('answer', { sender: socket.id, answer: data.answer });
     });
 
     socket.on('candidate', (data) => {
-        socket.broadcast.emit('candidate', data);
+        // Route ICE candidates specifically to their target endpoint
+        socket.to(data.target).emit('candidate', { sender: socket.id, candidate: data.candidate });
+    });
+
+    socket.on('join_watch', () => {
+        // When a new watcher opens the page, announce them to room completely mapped 
+        socket.broadcast.emit('viewer_joined', socket.id);
+    });
+
+    socket.on('broadcast_ended', () => {
+        socket.broadcast.emit('stream_ended');
     });
 
     socket.on('disconnect', () => {
         console.log('User disconnected:', socket.id);
+        socket.broadcast.emit('viewer_left', socket.id);
     });
 });
 

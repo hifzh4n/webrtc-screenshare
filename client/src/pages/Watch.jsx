@@ -14,7 +14,10 @@ function Watch() {
     const [error, setError] = useState(false);
 
     useEffect(() => {
-        socket.on('offer', async (offer) => {
+        // Actively let the system know this socket wants to watch a stream
+        socket.emit('join_watch');
+
+        socket.on('offer', async ({ sender, offer }) => {
             try {
                 const peerConnection = createPeerConnection();
                 peerConnectionRef.current = peerConnection;
@@ -39,22 +42,27 @@ function Watch() {
 
                 peerConnection.onicecandidate = (event) => {
                     if (event.candidate) {
-                        socket.emit('candidate', event.candidate);
+                        socket.emit('candidate', { target: sender, candidate: event.candidate });
                     }
                 };
 
                 const answer = await createAnswer(peerConnection, offer);
-                socket.emit('answer', answer);
+                socket.emit('answer', { target: sender, answer });
             } catch (err) {
                 console.error("Watch error:", err);
                 setError(true);
             }
         });
 
-        socket.on('candidate', async (candidate) => {
+        socket.on('candidate', async ({ candidate }) => {
             if (peerConnectionRef.current && candidate) {
                 await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(candidate));
             }
+        });
+
+        socket.on('stream_ended', () => {
+            setIsPlaying(false);
+            if (videoRef.current) videoRef.current.srcObject = null;
         });
 
         return () => {

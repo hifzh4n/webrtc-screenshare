@@ -9,29 +9,63 @@ import { Badge } from '../components/ui/Badge';
 
 function Broadcast() {
     const videoRef = useRef(null);
-    const peerConnectionRef = useRef(null);
+    const peerConnectionsRef = useRef({});
     const [isBroadcasting, setIsBroadcasting] = useState(false);
     const [viewers, setViewers] = useState(0);
 
+    const activeStreamRef = useRef(null);
+
     useEffect(() => {
-        socket.on('answer', async (answer) => {
-            if (peerConnectionRef.current) {
-                await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(answer));
+        socket.on('viewer_joined', async (viewerId) => {
+            if (!isBroadcasting || !activeStreamRef.current) return;
+
+            const peerConnection = createPeerConnection();
+            peerConnectionsRef.current[viewerId] = peerConnection;
+
+            activeStreamRef.current.getTracks().forEach((track) => {
+                peerConnection.addTrack(track, activeStreamRef.current);
+            });
+
+            peerConnection.onicecandidate = (event) => {
+                if (event.candidate) {
+                    socket.emit('candidate', { target: viewerId, candidate: event.candidate });
+                }
+            };
+
+            const offer = await createOffer(peerConnection);
+            socket.emit('offer', { target: viewerId, offer });
+        });
+
+        socket.on('answer', async ({ sender, answer }) => {
+            const pc = peerConnectionsRef.current[sender];
+            if (pc) {
+                await pc.setRemoteDescription(new RTCSessionDescription(answer));
                 setViewers((prev) => prev + 1);
             }
         });
 
-        socket.on('candidate', async (candidate) => {
-            if (peerConnectionRef.current && candidate) {
-                await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(candidate));
+        socket.on('candidate', async ({ sender, candidate }) => {
+            const pc = peerConnectionsRef.current[sender];
+            if (pc && candidate) {
+                await pc.addIceCandidate(new RTCIceCandidate(candidate));
+            }
+        });
+
+        socket.on('viewer_left', (viewerId) => {
+            if (peerConnectionsRef.current[viewerId]) {
+                peerConnectionsRef.current[viewerId].close();
+                delete peerConnectionsRef.current[viewerId];
+                setViewers((prev) => Math.max(0, prev - 1));
             }
         });
 
         return () => {
+            socket.off('viewer_joined');
             socket.off('answer');
             socket.off('candidate');
+            socket.off('viewer_left');
         };
-    }, []);
+    }, [isBroadcasting]);
 
     const startScreenShare = async () => {
         try {
@@ -45,31 +79,32 @@ function Broadcast() {
             }
 
             setIsBroadcasting(true);
-
-            const peerConnection = createPeerConnection();
-            peerConnectionRef.current = peerConnection;
+            activeStreamRef.current = stream;
 
             stream.getTracks().forEach((track) => {
-                peerConnection.addTrack(track, stream);
                 track.onended = () => {
-                    setIsBroadcasting(false);
-                    setViewers(0);
+                    stopBroadcasting();
                 };
             });
-
-            peerConnection.onicecandidate = (event) => {
-                if (event.candidate) {
-                    socket.emit('candidate', event.candidate);
-                }
-            };
-
-            const offer = await createOffer(peerConnection);
-            socket.emit('offer', offer);
 
         } catch (err) {
             console.error("Error starting screen share:", err);
             setIsBroadcasting(false);
         }
+    };
+
+    const stopBroadcasting = () => {
+        if (activeStreamRef.current) {
+            activeStreamRef.current.getTracks().forEach(t => t.stop());
+        }
+
+        Object.values(peerConnectionsRef.current).forEach(pc => pc.close());
+        peerConnectionsRef.current = {};
+
+        activeStreamRef.current = null;
+        setIsBroadcasting(false);
+        setViewers(0);
+        socket.emit('broadcast_ended');
     };
 
     return (
@@ -145,10 +180,7 @@ function Broadcast() {
                                 <Button size="icon" variant="ghost" className="bg-white/10 hover:bg-red-500/20 text-red-500 rounded-full">
                                     <MicOff className="w-5 h-5" />
                                 </Button>
-                                <Button onClick={() => {
-                                    stream.getTracks().forEach(t => t.stop());
-                                    setIsBroadcasting(false);
-                                }}
+                                <Button onClick={stopBroadcasting}
                                     size="sm"
                                     className="ml-4 gap-2 bg-red-600 hover:bg-red-700 text-white rounded-full font-bold px-4"
                                 >
