@@ -24,7 +24,7 @@ io.on('connection', (socket) => {
 
     socket.on('offer', (data) => {
         // Broadcaster sends an offer targeted to a specific viewer
-        socket.to(data.target).emit('offer', { sender: socket.id, offer: data.offer });
+        socket.to(data.target).emit('offer', { sender: socket.id, offer: data.offer, title: data.title });
     });
 
     socket.on('answer', (data) => {
@@ -35,6 +35,10 @@ io.on('connection', (socket) => {
     socket.on('candidate', (data) => {
         // Route ICE candidates specifically to their target endpoint
         socket.to(data.target).emit('candidate', { sender: socket.id, candidate: data.candidate });
+    });
+
+    socket.on('update_title', (title) => {
+        socket.broadcast.emit('stream_title', title);
     });
 
     socket.on('join_watch', () => {

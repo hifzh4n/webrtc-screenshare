@@ -1,6 +1,6 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import { Play, Volume2, Maximize, MessageSquare, Heart, Share2, AlertCircle, Settings } from 'lucide-react';
+import { Play, Volume2, VolumeX, Maximize, MessageSquare, Heart, Share2, AlertCircle, Settings } from 'lucide-react';
 import { socket } from '../services/socket';
 import { createPeerConnection, createAnswer } from '../services/webrtc';
 import { Button } from '../components/ui/Button';
@@ -12,12 +12,15 @@ function Watch() {
     const peerConnectionRef = useRef(null);
     const [isPlaying, setIsPlaying] = useState(false);
     const [error, setError] = useState(false);
+    const [isMuted, setIsMuted] = useState(false);
+    const [streamTitle, setStreamTitle] = useState('Waiting for Broadcast...');
 
     useEffect(() => {
         // Actively let the system know this socket wants to watch a stream
         socket.emit('join_watch');
 
-        socket.on('offer', async ({ sender, offer }) => {
+        socket.on('offer', async ({ sender, offer, title }) => {
+            if (title) setStreamTitle(title);
             try {
                 const peerConnection = createPeerConnection();
                 peerConnectionRef.current = peerConnection;
@@ -60,16 +63,37 @@ function Watch() {
             }
         });
 
+        socket.on('stream_title', (title) => {
+            setStreamTitle(title);
+        });
+
         socket.on('stream_ended', () => {
             setIsPlaying(false);
             if (videoRef.current) videoRef.current.srcObject = null;
+            setStreamTitle('Broadcast Ended');
         });
 
         return () => {
             socket.off('offer');
             socket.off('candidate');
+            socket.off('stream_title');
+            socket.off('stream_ended');
         };
     }, []);
+
+    const toggleFullscreen = () => {
+        if (!document.fullscreenElement) {
+            videoRef.current?.requestFullscreen().catch(err => {
+                console.error(`Error attempting to enable fullscreen: ${err.message}`);
+            });
+        } else {
+            document.exitFullscreen();
+        }
+    };
+
+    const toggleMute = () => {
+        setIsMuted(!isMuted);
+    };
 
     return (
         <motion.div
@@ -111,7 +135,7 @@ function Watch() {
                     ref={videoRef}
                     autoPlay
                     playsInline
-                    muted
+                    muted={isMuted}
                     className={`w-full h-full object-contain bg-black transition-opacity duration-1000 ${isPlaying ? 'opacity-100' : 'opacity-0'}`}
                 />
 
@@ -119,22 +143,20 @@ function Watch() {
                 <div className="absolute inset-0 pointer-events-none flex flex-col justify-end">
                     <div className="bg-gradient-to-t from-black/95 via-black/60 to-transparent p-6 pt-24 opacity-0 hover:opacity-100 transition-all duration-300 pointer-events-auto flex items-end justify-between z-20">
                         <div className="flex flex-col gap-2">
-                            <h1 className="text-2xl lg:text-3xl font-bold tracking-tight text-white">Grand Finals Matchup 2026</h1>
+                            <h1 className="text-2xl lg:text-3xl font-bold tracking-tight text-white">{streamTitle}</h1>
                             <div className="flex flex-wrap items-center gap-3 text-xs sm:text-sm text-gray-300">
-                                <span className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.8)]"></div> Ultra-Low Latency via WebRTC</span>
-                                <span className="hidden sm:inline">•</span>
                                 <span className="hidden sm:inline">SportsCast Premium</span>
                             </div>
                         </div>
 
                         <div className="flex items-center gap-2 sm:gap-4">
-                            <Button size="icon" variant="ghost" className="hover:bg-white/20 text-white rounded-full">
-                                <Volume2 className="w-5 h-5" />
+                            <Button size="icon" variant="ghost" className="hover:bg-white/20 text-white rounded-full" onClick={toggleMute}>
+                                {isMuted ? <VolumeX className="w-5 h-5 text-red-500" /> : <Volume2 className="w-5 h-5" />}
                             </Button>
                             <Button size="icon" variant="ghost" className="hover:bg-white/20 text-white rounded-full">
                                 <Settings className="w-5 h-5" />
                             </Button>
-                            <Button size="icon" variant="ghost" className="hover:bg-white/20 text-white rounded-full">
+                            <Button size="icon" variant="ghost" className="hover:bg-white/20 text-white rounded-full" onClick={toggleFullscreen}>
                                 <Maximize className="w-5 h-5" />
                             </Button>
                         </div>

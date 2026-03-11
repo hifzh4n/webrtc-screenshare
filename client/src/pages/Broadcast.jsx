@@ -12,8 +12,18 @@ function Broadcast() {
     const peerConnectionsRef = useRef({});
     const [isBroadcasting, setIsBroadcasting] = useState(false);
     const [viewers, setViewers] = useState(0);
+    const [streamTitle, setStreamTitle] = useState('Championship Finals HD');
+    const [resolution, setResolution] = useState('1080p');
+    const streamTitleRef = useRef(streamTitle);
 
     const activeStreamRef = useRef(null);
+
+    useEffect(() => {
+        streamTitleRef.current = streamTitle;
+        if (isBroadcasting) {
+            socket.emit('update_title', streamTitle);
+        }
+    }, [streamTitle, isBroadcasting]);
 
     useEffect(() => {
         socket.on('viewer_joined', async (viewerId) => {
@@ -33,7 +43,7 @@ function Broadcast() {
             };
 
             const offer = await createOffer(peerConnection);
-            socket.emit('offer', { target: viewerId, offer });
+            socket.emit('offer', { target: viewerId, offer, title: streamTitleRef.current });
         });
 
         socket.on('answer', async ({ sender, answer }) => {
@@ -69,9 +79,15 @@ function Broadcast() {
 
     const startScreenShare = async () => {
         try {
+            const videoConstraints = {
+                '1080p': { height: 1080 },
+                '720p': { height: 720 },
+                '480p': { height: 480 }
+            };
+
             const stream = await navigator.mediaDevices.getDisplayMedia({
-                video: true,
-                audio: false
+                video: videoConstraints[resolution] || true,
+                audio: true
             });
 
             if (videoRef.current) {
@@ -140,10 +156,28 @@ function Broadcast() {
                     <div className="absolute inset-0 flex flex-col items-center justify-center bg-[url('https://images.unsplash.com/photo-1540747913346-19e32dc3e97e?q=80&w=2667&auto=format&fit=crop')] bg-cover bg-center before:content-[''] before:absolute before:inset-0 before:bg-black/90 z-10">
                         <RadioTower className="w-20 h-20 text-[#333] mb-6 relative z-10" />
                         <h2 className="text-3xl font-bold text-white relative z-10 mb-2">Control Room</h2>
-                        <p className="text-gray-500 font-medium relative z-10 uppercase tracking-widest text-sm mb-8">Ready to Transmit Feed</p>
+                        <p className="text-gray-500 font-medium relative z-10 uppercase tracking-widest text-sm mb-6">Ready to Transmit Feed</p>
 
-                        <Button
-                            onClick={startScreenShare}
+                        <div className="relative z-10 flex flex-col sm:flex-row items-center gap-4 mb-8">
+                            <input
+                                type="text"
+                                value={streamTitle}
+                                onChange={(e) => setStreamTitle(e.target.value)}
+                                className="bg-[#111]/80 text-white border border-[#333] rounded-lg px-4 py-3 w-64 focus:outline-none focus:border-primary placeholder-gray-500 shadow-xl backdrop-blur-md"
+                                placeholder="Enter Stream Title"
+                            />
+                            <select
+                                value={resolution}
+                                onChange={(e) => setResolution(e.target.value)}
+                                className="bg-[#111]/80 text-white border border-[#333] rounded-lg px-4 py-3 w-32 focus:outline-none focus:border-primary shadow-xl backdrop-blur-md"
+                            >
+                                <option value="1080p">1080p</option>
+                                <option value="720p">720p</option>
+                                <option value="480p">480p</option>
+                            </select>
+                        </div>
+
+                        <Button onClick={startScreenShare}
                             size="lg"
                             className="gap-2 bg-primary text-white hover:bg-primary/90 font-bold px-8 py-6 rounded-full relative z-10 shadow-[0_0_30px_rgba(225,29,72,0.3)] transition-all hover:scale-105"
                         >
@@ -170,7 +204,7 @@ function Broadcast() {
                     <div className="absolute inset-0 pointer-events-none flex flex-col justify-end">
                         <div className="bg-gradient-to-t from-black/95 via-black/60 to-transparent p-6 pt-24 opacity-0 hover:opacity-100 transition-all duration-300 pointer-events-auto flex items-end justify-between z-20">
                             <div className="flex flex-col gap-2">
-                                <h1 className="text-2xl lg:text-3xl font-bold tracking-tight text-white">Championship Finals HD</h1>
+                                <h1 className="text-2xl lg:text-3xl font-bold tracking-tight text-white">{streamTitle}</h1>
                             </div>
 
                             <div className="flex items-center gap-2 sm:gap-4">
@@ -213,12 +247,7 @@ function Broadcast() {
 
                         <div className="bg-[#111] p-4 rounded-xl border border-[#222]">
                             <p className="text-xs text-gray-500 font-semibold uppercase tracking-wider mb-1.5">Output Resolution</p>
-                            <p className="text-sm font-medium text-gray-200">1080p60 (Display Source)</p>
-                        </div>
-
-                        <div className="bg-[#111] p-4 rounded-xl border border-[#222]">
-                            <p className="text-xs text-gray-500 font-semibold uppercase tracking-wider mb-1.5">Latency Target</p>
-                            <p className="text-sm font-semibold text-emerald-400">Ultra-Low (~20ms Target)</p>
+                            <p className="text-sm font-medium text-gray-200">{resolution} (Display Source)</p>
                         </div>
 
                         <div className="bg-[#111] p-4 rounded-xl border border-[#222]">
