@@ -61,6 +61,26 @@ function Broadcast() {
             }
         });
 
+        socket.on('request_resolution', async ({ viewerId, resolution }) => {
+            const pc = peerConnectionsRef.current[viewerId];
+            if (!pc) return;
+            const senders = pc.getSenders();
+            const videoSender = senders.find(s => s.track && s.track.kind === 'video');
+
+            if (videoSender) {
+                const params = videoSender.getParameters();
+                if (!params.encodings) params.encodings = [{}];
+
+                let scale = 1.0;
+                if (resolution === '720p') scale = 1.5;
+                if (resolution === '480p') scale = 2.25;
+                if (resolution === '360p') scale = 3.0;
+
+                params.encodings[0].scaleResolutionDownBy = scale;
+                await videoSender.setParameters(params).catch(console.error);
+            }
+        });
+
         socket.on('viewer_left', (viewerId) => {
             if (peerConnectionsRef.current[viewerId]) {
                 peerConnectionsRef.current[viewerId].close();

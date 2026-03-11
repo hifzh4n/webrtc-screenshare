@@ -10,10 +10,12 @@ import { Badge } from '../components/ui/Badge';
 function Watch() {
     const videoRef = useRef(null);
     const peerConnectionRef = useRef(null);
+    const broadcasterSocketIdRef = useRef(null);
     const [isPlaying, setIsPlaying] = useState(false);
     const [error, setError] = useState(false);
-    const [isMuted, setIsMuted] = useState(false);
+    const [isMuted, setIsMuted] = useState(true); // Must start True for mobile Autoplay to work organically!
     const [streamTitle, setStreamTitle] = useState('Waiting for Broadcast...');
+    const [viewerResolution, setViewerResolution] = useState('1080p');
 
     useEffect(() => {
         // Actively let the system know this socket wants to watch a stream
@@ -21,6 +23,7 @@ function Watch() {
 
         socket.on('offer', async ({ sender, offer, title }) => {
             if (title) setStreamTitle(title);
+            broadcasterSocketIdRef.current = sender;
             try {
                 const peerConnection = createPeerConnection();
                 peerConnectionRef.current = peerConnection;
@@ -82,12 +85,35 @@ function Watch() {
     }, []);
 
     const toggleFullscreen = () => {
-        if (!document.fullscreenElement) {
-            videoRef.current?.requestFullscreen().catch(err => {
-                console.error(`Error attempting to enable fullscreen: ${err.message}`);
-            });
+        const elem = videoRef.current;
+        if (!elem) return;
+
+        if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+            if (elem.requestFullscreen) {
+                elem.requestFullscreen().catch(err => console.error(err));
+            } else if (elem.webkitRequestFullscreen) { /* Safari */
+                elem.webkitRequestFullscreen();
+            } else if (elem.webkitEnterFullscreen) { /* iOS Safari video specifically */
+                elem.webkitEnterFullscreen();
+            }
         } else {
-            document.exitFullscreen();
+            if (document.exitFullscreen) {
+                document.exitFullscreen();
+            } else if (document.webkitExitFullscreen) { /* Safari */
+                document.webkitExitFullscreen();
+            }
+        }
+    };
+
+    const handleResolutionChange = (e) => {
+        const resolution = e.target.value;
+        setViewerResolution(resolution);
+
+        if (broadcasterSocketIdRef.current) {
+            socket.emit('request_resolution', {
+                target: broadcasterSocketIdRef.current,
+                resolution
+            });
         }
     };
 
@@ -153,6 +179,24 @@ function Watch() {
                             <Button size="icon" variant="ghost" className="hover:bg-white/20 text-white rounded-full" onClick={toggleMute}>
                                 {isMuted ? <VolumeX className="w-5 h-5 text-red-500" /> : <Volume2 className="w-5 h-5" />}
                             </Button>
+                            <select
+                                value={viewerResolution}
+                                onChange={handleResolutionChange}
+                                className="bg-transparent text-white border border-white/20 hover:border-white/50 rounded-full px-3 py-1.5 focus:outline-none appearance-none cursor-pointer text-sm font-semibold transition-colors mr-2"
+                                style={{
+                                    backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E\")",
+                                    backgroundRepeat: "no-repeat",
+                                    backgroundPosition: "right 8px center",
+                                    backgroundSize: "16px",
+                                    paddingRight: "32px"
+                                }}
+                            >
+                                <option value="1080p" className="text-black">1080p (Source)</option>
+                                <option value="720p" className="text-black">720p (Data Saver)</option>
+                                <option value="480p" className="text-black">480p</option>
+                                <option value="360p" className="text-black">360p (Mobile)</option>
+                            </select>
+
                             <Button size="icon" variant="ghost" className="hover:bg-white/20 text-white rounded-full">
                                 <Settings className="w-5 h-5" />
                             </Button>

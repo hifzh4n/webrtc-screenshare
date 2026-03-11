@@ -37,6 +37,11 @@ io.on('connection', (socket) => {
         socket.to(data.target).emit('candidate', { sender: socket.id, candidate: data.candidate });
     });
 
+    socket.on('request_resolution', (data) => {
+        // Route quality scale requests back to specific broadcaster
+        socket.to(data.target).emit('request_resolution', { viewerId: socket.id, resolution: data.resolution });
+    });
+
     socket.on('update_title', (title) => {
         socket.broadcast.emit('stream_title', title);
     });
