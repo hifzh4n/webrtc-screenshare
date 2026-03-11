@@ -4,7 +4,11 @@ const { Server } = require('socket.io');
 const cors = require('cors');
 
 const app = express();
+const path = require('path');
 app.use(cors());
+
+// Serve static files from the React app
+app.use(express.static(path.join(__dirname, '../client/dist')));
 
 const server = http.createServer(app);
 const io = new Server(server, {
@@ -34,7 +38,12 @@ io.on('connection', (socket) => {
     });
 });
 
-const PORT = 3000;
+// Catch-all to serve index.html for React Router
+app.get('*', (req, res) => {
+    res.sendFile(path.join(__dirname, '../client/dist/index.html'));
+});
+
+const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
     console.log(`Signaling server running on port ${PORT}`);
 });
