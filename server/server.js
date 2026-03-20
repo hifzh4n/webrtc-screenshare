@@ -47,8 +47,22 @@ const corsOptions = {
 app.use(cors(corsOptions));
 
 // Serve static files from the React app
-app.use('/assets', express.static(CLIENT_ASSETS_DIR, { index: false, fallthrough: false }));
-app.use(express.static(CLIENT_DIST_DIR, { index: false }));
+app.use('/assets', express.static(CLIENT_ASSETS_DIR, {
+    index: false,
+    fallthrough: false,
+    setHeaders: (res) => {
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    }
+}));
+
+app.use(express.static(CLIENT_DIST_DIR, {
+    index: false,
+    setHeaders: (res, filePath) => {
+        if (filePath.endsWith('.html')) {
+            res.setHeader('Cache-Control', 'no-store');
+        }
+    }
+}));
 
 app.use((err, req, res, next) => {
     if (req.path.startsWith('/assets/')) {
@@ -351,6 +365,7 @@ app.use((req, res) => {
         return;
     }
 
+    res.setHeader('Cache-Control', 'no-store');
     res.sendFile(CLIENT_INDEX_FILE);
 });
 
