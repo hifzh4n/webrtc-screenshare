@@ -2,6 +2,7 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
+const fs = require('fs');
 
 const app = express();
 const path = require('path');
@@ -21,7 +22,8 @@ const parseCsv = (value, fallback = []) => {
 const DEFAULT_ROOM_ID = process.env.DEFAULT_ROOM_ID || 'main';
 const MAX_TITLE_LENGTH = parseIntEnv(process.env.MAX_TITLE_LENGTH, 140);
 const SOCKET_TRANSPORTS = parseCsv(process.env.SOCKET_TRANSPORTS, ['websocket']);
-const CLIENT_DIST_DIR = process.env.CLIENT_DIST_DIR || path.join(__dirname, '../client/dist');
+const CLIENT_DIST_DIR = path.resolve(process.env.CLIENT_DIST_DIR || path.join(__dirname, '../client/dist'));
+const CLIENT_INDEX_FILE = path.join(CLIENT_DIST_DIR, 'index.html');
 
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || 'http://localhost:5173,http://127.0.0.1:5173')
     .split(',')
@@ -44,7 +46,7 @@ const corsOptions = {
 app.use(cors(corsOptions));
 
 // Serve static files from the React app
-app.use(express.static(CLIENT_DIST_DIR));
+app.use(express.static(CLIENT_DIST_DIR, { index: false }));
 
 const server = http.createServer(app);
 const io = new Server(server, {
@@ -306,9 +308,23 @@ app.get('/health', (_req, res) => {
     });
 });
 
-// Catch-all to serve index.html for React Router
+// Serve index.html only for client-side routes (non-file paths).
+// Missing assets (e.g. /assets/*.css) should return 404, not HTML.
 app.use((req, res) => {
-    res.sendFile(path.join(CLIENT_DIST_DIR, 'index.html'));
+    if (path.extname(req.path)) {
+        res.status(404).json({ error: 'Asset not found', path: req.path });
+        return;
+    }
+
+    if (!fs.existsSync(CLIENT_INDEX_FILE)) {
+        res.status(503).json({
+            error: 'Client build not found',
+            detail: `Missing ${CLIENT_INDEX_FILE}. Run client build before starting server.`
+        });
+        return;
+    }
+
+    res.sendFile(CLIENT_INDEX_FILE);
 });
 
 const PORT = process.env.PORT || 3000;
