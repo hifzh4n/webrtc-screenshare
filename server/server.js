@@ -24,6 +24,7 @@ const MAX_TITLE_LENGTH = parseIntEnv(process.env.MAX_TITLE_LENGTH, 140);
 const SOCKET_TRANSPORTS = parseCsv(process.env.SOCKET_TRANSPORTS, ['websocket']);
 const CLIENT_DIST_DIR = path.resolve(process.env.CLIENT_DIST_DIR || path.join(__dirname, '../client/dist'));
 const CLIENT_INDEX_FILE = path.join(CLIENT_DIST_DIR, 'index.html');
+const CLIENT_ASSETS_DIR = path.join(CLIENT_DIST_DIR, 'assets');
 
 const allowedOrigins = (process.env.ALLOWED_ORIGINS || 'http://localhost:5173,http://127.0.0.1:5173')
     .split(',')
@@ -46,7 +47,20 @@ const corsOptions = {
 app.use(cors(corsOptions));
 
 // Serve static files from the React app
+app.use('/assets', express.static(CLIENT_ASSETS_DIR, { index: false, fallthrough: false }));
 app.use(express.static(CLIENT_DIST_DIR, { index: false }));
+
+app.use((err, req, res, next) => {
+    if (req.path.startsWith('/assets/')) {
+        res.status(err?.statusCode || err?.status || 500).json({
+            error: 'Asset request failed',
+            path: req.path,
+            detail: err?.message || 'unknown'
+        });
+        return;
+    }
+    next(err);
+});
 
 const server = http.createServer(app);
 const io = new Server(server, {
@@ -300,6 +314,10 @@ io.on('connection', (socket) => {
 });
 
 app.get('/health', (_req, res) => {
+    const assetFiles = fs.existsSync(CLIENT_ASSETS_DIR)
+        ? fs.readdirSync(CLIENT_ASSETS_DIR).slice(0, 20)
+        : [];
+
     res.json({
         ok: true,
         uptimeSec: Math.floor(process.uptime()),
@@ -308,7 +326,10 @@ app.get('/health', (_req, res) => {
             clientDistDir: CLIENT_DIST_DIR,
             indexFile: CLIENT_INDEX_FILE,
             distExists: fs.existsSync(CLIENT_DIST_DIR),
-            indexExists: fs.existsSync(CLIENT_INDEX_FILE)
+            indexExists: fs.existsSync(CLIENT_INDEX_FILE),
+            assetsDir: CLIENT_ASSETS_DIR,
+            assetsDirExists: fs.existsSync(CLIENT_ASSETS_DIR),
+            sampleAssets: assetFiles
         },
         metrics
     });
@@ -317,7 +338,7 @@ app.get('/health', (_req, res) => {
 // Serve index.html only for client-side routes (non-file paths).
 // Missing assets (e.g. /assets/*.css) should return 404, not HTML.
 app.use((req, res) => {
-    if (path.extname(req.path)) {
+    if (req.path.startsWith('/assets/') || path.extname(req.path)) {
         res.status(404).json({ error: 'Asset not found', path: req.path });
         return;
     }
