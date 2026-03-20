@@ -304,6 +304,12 @@ app.get('/health', (_req, res) => {
         ok: true,
         uptimeSec: Math.floor(process.uptime()),
         rooms: roomState.size,
+        static: {
+            clientDistDir: CLIENT_DIST_DIR,
+            indexFile: CLIENT_INDEX_FILE,
+            distExists: fs.existsSync(CLIENT_DIST_DIR),
+            indexExists: fs.existsSync(CLIENT_INDEX_FILE)
+        },
         metrics
     });
 });
