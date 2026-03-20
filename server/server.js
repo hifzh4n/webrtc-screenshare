@@ -49,7 +49,7 @@ app.use(cors(corsOptions));
 // Serve static files from the React app
 app.use('/assets', express.static(CLIENT_ASSETS_DIR, {
     index: false,
-    fallthrough: false,
+    fallthrough: true,
     setHeaders: (res) => {
         res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
     }
@@ -63,18 +63,6 @@ app.use(express.static(CLIENT_DIST_DIR, {
         }
     }
 }));
-
-app.use((err, req, res, next) => {
-    if (req.path.startsWith('/assets/')) {
-        res.status(err?.statusCode || err?.status || 500).json({
-            error: 'Asset request failed',
-            path: req.path,
-            detail: err?.message || 'unknown'
-        });
-        return;
-    }
-    next(err);
-});
 
 const server = http.createServer(app);
 const io = new Server(server, {
@@ -347,6 +335,10 @@ app.get('/health', (_req, res) => {
         },
         metrics
     });
+});
+
+app.get('/', (_req, res) => {
+    res.redirect(302, '/watch');
 });
 
 // Serve index.html only for client-side routes (non-file paths).
