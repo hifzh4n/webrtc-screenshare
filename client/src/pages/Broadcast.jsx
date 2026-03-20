@@ -1,36 +1,85 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import { Video, MicOff, Settings, Users, RadioTower, Disc3, ShieldAlert } from 'lucide-react';
+import { Video, MicOff, Users, RadioTower, Disc3, ShieldAlert } from 'lucide-react';
 import { socket } from '../services/socket';
 import { createPeerConnection, createOffer } from '../services/webrtc';
 import { Button } from '../components/ui/Button';
-import { Card, CardContent } from '../components/ui/Card';
 import { Badge } from '../components/ui/Badge';
+import { incrementMetric, logTelemetry } from '../lib/telemetry';
 
 function Broadcast() {
+    const MotionDiv = motion.div;
     const videoRef = useRef(null);
     const peerConnectionsRef = useRef({});
     const [isBroadcasting, setIsBroadcasting] = useState(false);
     const [viewers, setViewers] = useState(0);
     const [streamTitle, setStreamTitle] = useState('Championship Finals HD');
     const [resolution, setResolution] = useState('1080p');
+    const [copySuccess, setCopySuccess] = useState(false);
+    const [socketStatus, setSocketStatus] = useState(socket.connected ? 'connected' : 'connecting');
     const streamTitleRef = useRef(streamTitle);
+    const roomIdRef = useRef(new URLSearchParams(window.location.search).get('room') || 'main');
 
     const activeStreamRef = useRef(null);
+    const connectedViewersRef = useRef(new Set());
+
+    const copyShareLink = () => {
+        const url = window.location.origin; 
+        navigator.clipboard.writeText(url).then(() => {
+            setCopySuccess(true);
+            setTimeout(() => setCopySuccess(false), 3000);
+        }).catch(err => {
+            console.error("Failed to copy link", err);
+        });
+    };
 
     useEffect(() => {
         streamTitleRef.current = streamTitle;
         if (isBroadcasting) {
-            socket.emit('update_title', streamTitle);
+            socket.emit('update_title', { title: streamTitle });
+            incrementMetric('broadcast_update_title_total');
         }
     }, [streamTitle, isBroadcasting]);
 
     useEffect(() => {
+        const onConnect = () => setSocketStatus('connected');
+        const onDisconnect = () => setSocketStatus('disconnected');
+        const onReconnectAttempt = () => setSocketStatus('reconnecting');
+        const onConnectError = () => setSocketStatus('error');
+        const onReconnectFailed = () => setSocketStatus('error');
+
+        socket.on('connect', onConnect);
+        socket.on('disconnect', onDisconnect);
+        socket.on('reconnect_attempt', onReconnectAttempt);
+        socket.on('connect_error', onConnectError);
+        socket.on('reconnect_failed', onReconnectFailed);
+
+        return () => {
+            socket.off('connect', onConnect);
+            socket.off('disconnect', onDisconnect);
+            socket.off('reconnect_attempt', onReconnectAttempt);
+            socket.off('connect_error', onConnectError);
+            socket.off('reconnect_failed', onReconnectFailed);
+        };
+    }, []);
+
+    useEffect(() => {
         socket.on('viewer_joined', async (viewerId) => {
-            if (!isBroadcasting || !activeStreamRef.current) return;
+            if (!activeStreamRef.current) return;
+
+            if (peerConnectionsRef.current[viewerId]) {
+                peerConnectionsRef.current[viewerId].close();
+                delete peerConnectionsRef.current[viewerId];
+            }
 
             const peerConnection = createPeerConnection();
             peerConnectionsRef.current[viewerId] = peerConnection;
+
+            peerConnection.oniceconnectionstatechange = () => {
+                const state = peerConnection.iceConnectionState;
+                incrementMetric(`broadcast_ice_state_${state}_total`);
+                logTelemetry('broadcast.ice_state_change', { viewerId, state });
+            };
 
             activeStreamRef.current.getTracks().forEach((track) => {
                 peerConnection.addTrack(track, activeStreamRef.current);
@@ -42,22 +91,41 @@ function Broadcast() {
                 }
             };
 
-            const offer = await createOffer(peerConnection);
-            socket.emit('offer', { target: viewerId, offer, title: streamTitleRef.current });
+            try {
+                const offer = await createOffer(peerConnection);
+                socket.emit('offer', { target: viewerId, offer, title: streamTitleRef.current });
+                incrementMetric('broadcast_offer_sent_total');
+            } catch (err) {
+                incrementMetric('broadcast_offer_failed_total');
+                logTelemetry('broadcast.offer_failed', { viewerId, message: err?.message || 'unknown' }, 'error');
+            }
         });
 
         socket.on('answer', async ({ sender, answer }) => {
             const pc = peerConnectionsRef.current[sender];
             if (pc) {
-                await pc.setRemoteDescription(new RTCSessionDescription(answer));
-                setViewers((prev) => prev + 1);
+                try {
+                    await pc.setRemoteDescription(new RTCSessionDescription(answer));
+                    connectedViewersRef.current.add(sender);
+                    setViewers(connectedViewersRef.current.size);
+                    incrementMetric('broadcast_answer_received_total');
+                } catch (err) {
+                    incrementMetric('broadcast_answer_failed_total');
+                    logTelemetry('broadcast.answer_failed', { sender, message: err?.message || 'unknown' }, 'error');
+                }
             }
         });
 
         socket.on('candidate', async ({ sender, candidate }) => {
             const pc = peerConnectionsRef.current[sender];
             if (pc && candidate) {
-                await pc.addIceCandidate(new RTCIceCandidate(candidate));
+                try {
+                    await pc.addIceCandidate(new RTCIceCandidate(candidate));
+                    incrementMetric('broadcast_candidate_received_total');
+                } catch (err) {
+                    incrementMetric('broadcast_candidate_failed_total');
+                    logTelemetry('broadcast.candidate_failed', { sender, message: err?.message || 'unknown' }, 'error');
+                }
             }
         });
 
@@ -85,14 +153,16 @@ function Broadcast() {
             if (peerConnectionsRef.current[viewerId]) {
                 peerConnectionsRef.current[viewerId].close();
                 delete peerConnectionsRef.current[viewerId];
-                setViewers((prev) => Math.max(0, prev - 1));
             }
+            connectedViewersRef.current.delete(viewerId);
+            setViewers(connectedViewersRef.current.size);
         });
 
         return () => {
             socket.off('viewer_joined');
             socket.off('answer');
             socket.off('candidate');
+            socket.off('request_resolution');
             socket.off('viewer_left');
         };
     }, [isBroadcasting]);
@@ -114,8 +184,13 @@ function Broadcast() {
                 videoRef.current.srcObject = stream;
             }
 
-            setIsBroadcasting(true);
             activeStreamRef.current = stream;
+            setIsBroadcasting(true);
+
+            socket.emit('join_broadcast', {
+                roomId: roomIdRef.current,
+                title: streamTitleRef.current
+            });
 
             stream.getTracks().forEach((track) => {
                 track.onended = () => {
@@ -126,6 +201,8 @@ function Broadcast() {
         } catch (err) {
             console.error("Error starting screen share:", err);
             setIsBroadcasting(false);
+            incrementMetric('broadcast_start_failed_total');
+            logTelemetry('broadcast.start_failed', { message: err?.message || 'unknown' }, 'error');
         }
     };
 
@@ -136,6 +213,7 @@ function Broadcast() {
 
         Object.values(peerConnectionsRef.current).forEach(pc => pc.close());
         peerConnectionsRef.current = {};
+        connectedViewersRef.current.clear();
 
         activeStreamRef.current = null;
         setIsBroadcasting(false);
@@ -144,7 +222,7 @@ function Broadcast() {
     };
 
     return (
-        <motion.div
+        <MotionDiv
             initial={{ opacity: 0, scale: 0.98 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, y: -10 }}
@@ -252,7 +330,6 @@ function Broadcast() {
                     <h3 className="font-semibold text-white uppercase tracking-wider text-sm flex items-center gap-2">
                         <Disc3 className="w-4 h-4 text-primary" /> Session Info
                     </h3>
-                    <Settings className="w-4 h-4 text-gray-500 hover:text-white cursor-pointer transition-colors" />
                 </div>
 
                 <div className="flex-1 p-6 overflow-y-auto space-y-6 bg-gradient-to-b from-[#0a0a0a] to-[#0f0f0f]">
@@ -263,6 +340,7 @@ function Broadcast() {
                                 <span className={`w-2.5 h-2.5 rounded-full ${isBroadcasting ? 'bg-primary shadow-[0_0_8px_rgba(225,29,72,0.8)]' : 'bg-gray-600'}`}></span>
                                 {isBroadcasting ? 'Transmitting' : 'Awaiting Connection'}
                             </p>
+                            <p className="text-xs text-gray-400 mt-1">Socket: {socketStatus}</p>
                         </div>
 
                         <div className="bg-[#111] p-4 rounded-xl border border-[#222]">
@@ -281,10 +359,15 @@ function Broadcast() {
                 </div>
 
                 <div className="p-6 border-t border-[#1f1f1f] bg-[#0a0a0a]">
-                    <Button className="w-full bg-white text-black hover:bg-gray-200 rounded-full font-bold py-6">Copy Share Link</Button>
+                    <Button 
+                        onClick={copyShareLink} 
+                        className={`w-full rounded-full font-bold py-6 transition-all hover:scale-[1.02] active:scale-[0.98] duration-300 ${copySuccess ? 'bg-emerald-500 text-white hover:bg-emerald-600 shadow-[0_0_20px_rgba(16,185,129,0.4)]' : 'bg-white text-black hover:bg-gray-200'}`}
+                    >
+                        {copySuccess ? "Copied to Clipboard! ✓" : "Copy Share Link"}
+                    </Button>
                 </div>
             </div>
-        </motion.div>
+        </MotionDiv>
     );
 }
 

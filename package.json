@@ -8,7 +8,8 @@
     "start": "cd server && node server.js",
     "build": "cd client && npm install && npm run build && cd ../server && npm install",
     "start:server": "cd server && node server.js",
-    "start:client": "cd client && npm run dev"
+    "start:client": "cd client && npm run dev",
+    "test:server": "cd server && npm test"
   },
   "keywords": [],
   "author": "",
